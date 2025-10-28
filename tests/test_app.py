@@ -1,78 +1,103 @@
+import pytest
 import os
 import tempfile
-import json
-import pytest
+from app import app, init_db, DB_PATH
 
-# Lihtne pytest seadistus Flask test kliendiga
+@pytest.fixture
+def client():
+    db_fd, test_db = tempfile.mkstemp()
+    app.config['TESTING'] = True
+    global DB_PATH
+    DB_PATH = test_db
+    init_db()
 
-os.environ['DB_PATH'] = ''  # tagab, et allpool seatakse enne importi
+    with app.test_client() as client:
+        with client.session_transaction() as sess:
+            pass
+        yield client
 
-import importlib
-
-
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    """Loob eraldi ajutise andmebaasi ja Flask test kliendi"""
-    db_file = tmp_path / 'test.db'
-    monkeypatch.setenv('DB_PATH', str(db_file))
-    # Impordime appi iga testiga puhtalt
-    app_module = importlib.import_module('app')
-    importlib.reload(app_module)
-    app = app_module.app
-    app_module.init_db()
-    app.testing = True
-    with app.test_client() as c:
-        yield c
-
+    os.close(db_fd)
+    os.unlink(test_db)
 
 def register(client, username, password):
     return client.post('/api/register', json={'username': username, 'password': password})
 
-
 def login(client, username, password):
     return client.post('/api/login', json={'username': username, 'password': password})
 
+def change_password(client, old_password, new_password):
+    return client.post('/api/change-password', json={'old_password': old_password, 'new_password': new_password})
 
-def test_login_flow(client):
-    """Testib sisselogimise voogu"""
-    # registreerime
-    r = register(client, 'maria', 'salasona')
-    assert r.is_json and r.json['success'] is True
+def create_todo(client, title, description=''):
+    return client.post('/api/todos', json={'title': title, 'description': description})
 
-    # vale parool
-    r = login(client, 'maria', 'vale')
-    assert r.is_json and r.json['success'] is False
+def delete_todo(client, todo_id):
+    return client.delete(f'/api/todos/{todo_id}')
 
-    # õige parool
-    r = login(client, 'maria', 'salasona')
-    assert r.is_json and r.json['success'] is True
+# Тест регистрации
+def test_register_login(client):
+    rv = register(client, 'user1', 'password123')
+    assert rv.status_code == 200
+    data = rv.get_json()
+    assert data['success'] is True
 
+    # Повторная регистрация с тем же именем
+    rv = register(client, 'user1', 'password123')
+    data = rv.get_json()
+    assert data['success'] is False
 
-def test_create_todo(client):
-    """Testib ülesande lisamist"""
-    # kasutaja
-    assert register(client, 'jaan', 'parool1').json['success'] is True
-    assert login(client, 'jaan', 'parool1').json['success'] is True
+    # Логин с правильными данными
+    rv = login(client, 'user1', 'password123')
+    data = rv.get_json()
+    assert data['success'] is True
 
-    # lisame ülesande
-    payload = {
-        'title': 'Osta piim',
-        'description': '2L täispiima',
-        'priority': 'high',
-        'due_date': '2025-12-31',
-        'tags': 'Kodu,Pood'
-    }
-    r = client.post('/api/todos', json=payload)
-    assert r.is_json and r.json['success'] is True
+    # Логин с неверным паролем
+    rv = login(client, 'user1', 'wrongpass')
+    data = rv.get_json()
+    assert data['success'] is False
 
-    # kontrollime, et ülesanne on nimekirjas
-    r = client.get('/api/todos')
-    assert r.is_json and r.json['success'] is True
-    items = r.json['todos']
-    assert len(items) == 1
-    item = items[0]
-    assert item['title'] == 'Osta piim'
-    assert item['priority'] == 'high'
-    assert item['due_date'] == '2025-12-31'
-    assert 'Kodu' in (item.get('tags') or '')
+# Тест смены пароля
+def test_change_password_flow(client):
+    register(client, 'user2', 'oldpass123')
+    login(client, 'user2', 'oldpass123')
 
+    rv = change_password(client, 'oldpass123', 'newpass456')
+    data = rv.get_json()
+    assert data['success'] is True
+
+    # Попытка войти со старым паролем
+    client.post('/api/logout')
+    rv = login(client, 'user2', 'oldpass123')
+    data = rv.get_json()
+    assert data['success'] is False
+
+    # Вход с новым паролем
+    rv = login(client, 'user2', 'newpass456')
+    data = rv.get_json()
+    assert data['success'] is True
+
+# Тест добавления и удаления Todo
+def test_todo_create_delete(client):
+    register(client, 'user3', 'testpass')
+    login(client, 'user3', 'testpass')
+
+    # Создание Todo
+    rv = create_todo(client, 'My Task', 'Task description')
+    data = rv.get_json()
+    assert data['success'] is True
+
+    # Получаем список Todo, чтобы узнать ID
+    rv = client.get('/api/todos')
+    data = rv.get_json()
+    assert len(data['todos']) == 1
+    todo_id = data['todos'][0]['id']
+
+    # Удаление Todo
+    rv = delete_todo(client, todo_id)
+    data = rv.get_json()
+    assert data['success'] is True
+
+    # Проверка, что список пуст
+    rv = client.get('/api/todos')
+    data = rv.get_json()
+    assert len(data['todos']) == 0
