@@ -6,18 +6,19 @@ from datetime import datetime
 import json
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'  # Muuda seda tootmiskeskkonnas
+app.secret_key = 'your-secret-key-here'  
 app.config['UPLOAD_FOLDER'] = os.path.join('static', 'uploads')
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 DB_PATH = os.environ.get('DB_PATH', 'todo.db')
 
-# Andmebaasi initsialiseerimine
+def get_connection():
+    return sqlite3.connect(DB_PATH)
+
 def init_db():
-    """Andmebaasi tabelite loomine"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     
-    # Kasutajate tabel
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,7 +28,7 @@ def init_db():
         )
     ''')
     
-    # Todo ülesannete tabel
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS todos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +44,7 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    # Tegevuslogi tabel
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS activity_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +56,7 @@ def init_db():
         )
     ''')
 
-    # Skeemi uuendused olemasolevatele instantsidele (lisab veerud kui neid pole)
+    
     cursor.execute("PRAGMA table_info(todos)")
     cols = [row[1] for row in cursor.fetchall()]
     if 'tags' not in cols:
@@ -66,15 +67,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Kasutaja sisselogimise kontroll
+
 def is_logged_in():
     """Kontrollib kas kasutaja on sisse logitud"""
     return 'user_id' in session
 
-# Kasutaja andmete hankimine
+
 def get_user_data(user_id):
     """Hankib kasutaja andmed andmebaasist"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     cursor.execute('SELECT id, username FROM users WHERE id = ?', (user_id,))
     user = cursor.fetchone()
@@ -83,7 +84,7 @@ def get_user_data(user_id):
 
 def log_activity(user_id, todo_id, action, details=None):
     """Salvestab tegevuslogi kirje"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     cursor.execute('INSERT INTO activity_logs (user_id, todo_id, action, details) VALUES (?, ?, ?, ?)',
                    (user_id, todo_id, action, details))
@@ -108,16 +109,16 @@ def register():
     if len(password) < 6:
         return jsonify({'success': False, 'message': 'Parool peab olema vähemalt 6 tähemärki pikk'})
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     
     try:
-        # Kontrollib kas kasutajanimi on juba olemas
+        
         cursor.execute('SELECT id FROM users WHERE username = ?', (username,))
         if cursor.fetchone():
             return jsonify({'success': False, 'message': 'Kasutajanimi on juba kasutusel'})
         
-        # Loob uue kasutaja
+        
         password_hash = generate_password_hash(password)
         cursor.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', 
                        (username, password_hash))
@@ -140,11 +141,11 @@ def login():
     if not username or not password:
         return jsonify({'success': False, 'message': 'Kasutajanimi ja parool on kohustuslikud'})
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     
     try:
-        # Otsib kasutajat andmebaasist
+        
         cursor.execute('SELECT id, password_hash FROM users WHERE username = ?', (username,))
         user = cursor.fetchone()
         
@@ -185,18 +186,18 @@ def change_password():
     if len(new_password) < 6:
         return jsonify({'success': False, 'message': 'Uus parool peab olema vähemalt 6 tähemärki pikk'})
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     
     try:
-        # Kontrollib vana parooli
+        
         cursor.execute('SELECT password_hash FROM users WHERE id = ?', (session['user_id'],))
         user = cursor.fetchone()
         
         if not user or not check_password_hash(user[0], old_password):
             return jsonify({'success': False, 'message': 'Vale vana parool'})
         
-        # Uuendab parooli
+        
         new_password_hash = generate_password_hash(new_password)
         cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?', 
                        (new_password_hash, session['user_id']))
@@ -225,7 +226,7 @@ def get_todos():
         sort_by = 'created_at'
     sort_dir_sql = 'DESC' if sort_dir == 'desc' else 'ASC'
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     
     try:
@@ -280,7 +281,7 @@ def create_todo():
     if not title:
         return jsonify({'success': False, 'message': 'Pealkiri on kohustuslik'})
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     
     try:
@@ -307,17 +308,17 @@ def update_todo(todo_id):
     
     data = request.get_json()
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     
     try:
-        # Kontrollib kas ülesanne kuulub kasutajale
+        
         cursor.execute('SELECT id FROM todos WHERE id = ? AND user_id = ?', 
                        (todo_id, session['user_id']))
         if not cursor.fetchone():
             return jsonify({'success': False, 'message': 'Ülesannet ei leitud'})
         
-        # Uuendab ülesannet
+        
         update_fields = []
         update_values = []
         
@@ -370,11 +371,11 @@ def delete_todo(todo_id):
     if not is_logged_in():
         return jsonify({'success': False, 'message': 'Sa pead olema sisse logitud'})
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     
     try:
-        # Kontrollib kas ülesanne kuulub kasutajale
+        
         cursor.execute('SELECT id FROM todos WHERE id = ? AND user_id = ?', 
                        (todo_id, session['user_id']))
         if not cursor.fetchone():
@@ -413,7 +414,7 @@ def bulk_actions():
     ids = data.get('ids') or []
     if action not in ('complete', 'incomplete', 'delete') or not ids:
         return jsonify({'success': False, 'message': 'Vigane päring'})
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect('todo.db')
     cursor = conn.cursor()
     try:
         placeholders = ','.join('?' for _ in ids)
@@ -462,7 +463,7 @@ def manage_attachment(todo_id):
             log_activity(session['user_id'], todo_id, 'attach', 'Lisati manus')
             return jsonify({'success': True, 'attachment_path': filepath})
         else:
-            # DELETE manus
+            
             current = row[1]
             if current and os.path.exists(current):
                 try:
