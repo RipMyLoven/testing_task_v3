@@ -34,29 +34,24 @@ def create_todo(client, title, description=''):
 def delete_todo(client, todo_id):
     return client.delete(f'/api/todos/{todo_id}')
 
-# Тест регистрации
 def test_register_login(client):
     rv = register(client, 'user1', 'password123')
     assert rv.status_code == 200
     data = rv.get_json()
     assert data['success'] is True
 
-    # Повторная регистрация с тем же именем
     rv = register(client, 'user1', 'password123')
     data = rv.get_json()
     assert data['success'] is False
 
-    # Логин с правильными данными
     rv = login(client, 'user1', 'password123')
     data = rv.get_json()
     assert data['success'] is True
 
-    # Логин с неверным паролем
     rv = login(client, 'user1', 'wrongpass')
     data = rv.get_json()
     assert data['success'] is False
 
-# Тест смены пароля
 def test_change_password_flow(client):
     register(client, 'user2', 'oldpass123')
     login(client, 'user2', 'oldpass123')
@@ -65,39 +60,32 @@ def test_change_password_flow(client):
     data = rv.get_json()
     assert data['success'] is True
 
-    # Попытка войти со старым паролем
     client.post('/api/logout')
     rv = login(client, 'user2', 'oldpass123')
     data = rv.get_json()
     assert data['success'] is False
 
-    # Вход с новым паролем
     rv = login(client, 'user2', 'newpass456')
     data = rv.get_json()
     assert data['success'] is True
 
-# Тест добавления и удаления Todo
 def test_todo_create_delete(client):
     register(client, 'user3', 'testpass')
     login(client, 'user3', 'testpass')
 
-    # Создание Todo
     rv = create_todo(client, 'My Task', 'Task description')
     data = rv.get_json()
     assert data['success'] is True
 
-    # Получаем список Todo, чтобы узнать ID
     rv = client.get('/api/todos')
     data = rv.get_json()
     assert len(data['todos']) == 1
     todo_id = data['todos'][0]['id']
 
-    # Удаление Todo
     rv = delete_todo(client, todo_id)
     data = rv.get_json()
     assert data['success'] is True
 
-    # Проверка, что список пуст
     rv = client.get('/api/todos')
     data = rv.get_json()
     assert len(data['todos']) == 0
